@@ -1,0 +1,7 @@
+
+config general
+	option screen_time '30'
+	option refresh_time '2'
+	option cputemp '1'
+	option psk_hide '0'
+
