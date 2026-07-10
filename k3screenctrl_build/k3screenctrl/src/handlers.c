@@ -18,10 +18,10 @@ void handle_mcu_version(const unsigned char *payload, int len) {
     g_mcu_version.patch_ver =
         payload[0] |
         payload[1] << 8; /* Do we need this endian compatabitity? */
-    g_mcu_version.minor_ver = payload[2];
-    g_mcu_version.major_ver = payload[3];
+    g_mcu_version.major_ver = payload[2];
+    g_mcu_version.minor_ver = payload[3];
 
-    syslog(LOG_INFO, "MCU reported version as %hhd.%hhd.%hd\n",
+    printf("INFO: MCU reported version as %hhu.%hhu.%hu\n",
            g_mcu_version.major_ver, g_mcu_version.minor_ver,
            g_mcu_version.patch_ver);
 }
@@ -70,4 +70,5 @@ void handle_key_press(const unsigned char *payload, int len) {
 RESPONSE_HANDLER g_response_handlers[] = {
     {RESPONSE_MCU_VERSION, handle_mcu_version},
     {RESPONSE_KEY_PRESS, handle_key_press},
+    {0, NULL}, /* sentinel */
 };

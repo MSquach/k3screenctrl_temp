@@ -56,9 +56,17 @@ static void frame_handler(const unsigned char *frame, int len) {
            frame[1]);
 }
 
-static int screen_initialize(int skip_reset, int boot_mode) {
-    int boot_gpio = !!boot_mode;
-
+/*
+ * Enable UART2 in the DMU, prepare the boot-mode / reset GPIOs and reset the
+ * MCU into APP mode.
+ *
+ * The MCU is always reset into APP mode here, regardless of the eventual
+ * target mode, so that an app-mode version request can be answered before
+ * screen_enter_bootloader() switches it to download mode. A delay after the
+ * reset pulse gives the MCU time to boot its app firmware; without it the
+ * version request is silently dropped.
+ */
+static int screen_initialize(int skip_reset) {
     mask_memory_byte(0x1800c1c1, 0xf0, 0); /* Enable UART2 in DMU */
 
     if (!skip_reset) {
@@ -74,14 +82,33 @@ static int screen_initialize(int skip_reset, int boot_mode) {
             return FAILURE;
         }
 
-        if (gpio_set_value(SCREEN_BOOT_MODE_GPIO, boot_gpio) == FAILURE ||
+        if (gpio_set_value(SCREEN_BOOT_MODE_GPIO, BOOT_MODE_APP) == FAILURE ||
             gpio_set_value(SCREEN_RESET_GPIO, 0) == FAILURE ||
             gpio_set_value(SCREEN_RESET_GPIO, 1) == FAILURE) {
             syslog(LOG_ERR, "Could not reset screen\n");
             return FAILURE;
         }
+
+        /* Give the MCU time to boot its app firmware before we talk to it. */
+        usleep(1500000);
     }
 
+    return SUCCESS;
+}
+
+/*
+ * Switch the MCU into bootloader (download) mode by raising the boot-mode
+ * GPIO and pulsing reset, then wait for the bootloader to come up. Only
+ * call this after screen_initialize().
+ */
+static int screen_enter_bootloader() {
+    if (gpio_set_value(SCREEN_BOOT_MODE_GPIO, BOOT_MODE_BOOTLOADER) == FAILURE ||
+        gpio_set_value(SCREEN_RESET_GPIO, 0) == FAILURE ||
+        gpio_set_value(SCREEN_RESET_GPIO, 1) == FAILURE) {
+        syslog(LOG_ERR, "Could not reset screen into bootloader mode\n");
+        return FAILURE;
+    }
+    usleep(200000); /* Give the bootloader time to come up */
     return SUCCESS;
 }
 
@@ -144,7 +171,7 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    if (screen_initialize(CFG->skip_reset, boot_mode) == FAILURE) {
+    if (screen_initialize(CFG->skip_reset) == FAILURE) {
         return -EIO;
     }
 
@@ -156,14 +183,45 @@ int main(int argc, char *argv[]) {
         return -EIO;
     }
 
+    /*
+     * Query the MCU version in app mode before any mode-specific setup.
+     * This runs for both normal app startup and firmware upgrade mode; in
+     * upgrade mode it logs the version of the firmware that is about to be
+     * replaced. The response is handled by handle_mcu_version() via the
+     * frame_handler dispatcher.
+     */
+    frame_set_received_callback(frame_handler);
+    request_mcu_version();
+
     if (boot_mode == BOOT_MODE_APP) {
-        frame_set_received_callback(frame_handler);
-        request_mcu_version();
         page_send_initial_data();
         refresh_screen_timeout();
         alarm(CFG->update_interval);
     } else if (boot_mode == BOOT_MODE_BOOTLOADER) {
-        /* Hand over everything to the firmware upgrade state machine */
+        /*
+         * Drain the app-mode version response (and any other pending frame)
+         * from the serial port before resetting the MCU into bootloader
+         * mode. Otherwise the leftover frame would be picked up by
+         * fwupgrade_frame_handler and misreported as an error.
+         */
+        for (int i = 0; i < 20; i++) {
+            struct pollfd pfd = { .fd = serial_fd, .events = POLLIN };
+            int r = poll(&pfd, 1, 100);
+            if (r > 0 && (pfd.revents & POLLIN)) {
+                frame_notify_serial_recv();
+            } else {
+                break; /* No more data within 100 ms */
+            }
+        }
+
+        /* Now that the current version has been logged, reset the MCU into
+         * download mode and hand control to the firmware upgrade state
+         * machine. */
+        if (CFG->skip_reset == 0) {
+            if (screen_enter_bootloader() == FAILURE) {
+                return -EIO;
+            }
+        }
         fwupgrade_start();
     }
 
