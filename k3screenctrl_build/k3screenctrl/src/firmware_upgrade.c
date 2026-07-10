@@ -131,7 +131,7 @@ static unsigned char char2hex(const char *str) {
 
 static int bl_send_version_req() {
     unsigned char type = FRAME_BL_MCU_VERSION_REQ;
-    printf("INFO: Checking MCU version...\n");
+    printf("INFO: Checking bootloader version...\n");
     return frame_send(&type, 1);
 }
 
@@ -291,11 +291,11 @@ static void fwupgrade_handle_timeout() {
     switch (g_upgrade_stage) {
         case UPGRADE_STAGE_VERSION_CHECK:
             if (g_retry_count > UPGRADE_MAX_RETRY) {
-                fprintf(stderr, "ERROR: MCU did not respond to version request after %d "
+                fprintf(stderr, "ERROR: bootloader did not respond to version request after %d "
                         "retries. Aborting.\n", UPGRADE_MAX_RETRY);
                 exit(EXIT_FAILURE);
             }
-            fprintf(stderr, "WARNING: MCU did not respond to version request "
+            fprintf(stderr, "WARNING: bootloader did not respond to version request "
                     "(retry %d/%d). Retrying...\n", g_retry_count, UPGRADE_MAX_RETRY);
             bl_send_version_req();
             alarm(UPGRADE_STAGE_VERSION_CHECK_TIMEOUT);
@@ -352,15 +352,15 @@ static void fwupgrade_frame_handler(const unsigned char *frame, int len) {
 
         if (g_upgrade_stage != UPGRADE_STAGE_VERSION_CHECK &&
             g_upgrade_stage != UPGRADE_STAGE_CONFIRM) {
-            fprintf(stderr, "MCU reported version but we did not request it?\n");
+            fprintf(stderr, "bootloader reported version but we did not request it?\n");
             return;
         }
 
-        printf("INFO: MCU reported version: %d.%d\n", ver_major, ver_minor);
+        printf("INFO: Bootloader reported version: %d.%d\n", ver_major, ver_minor);
         if (g_expected_major >= 0 && ver_major != g_expected_major) {
             /* Different major version means different architecture
              * (e.g. 1.x = MIPS, 2.x = ARM). They are incompatible. */
-            fprintf(stderr, "ERROR: MCU major version (%d) does not match "
+            fprintf(stderr, "ERROR: bootloader major version (%d) does not match "
                     "firmware file (%d). Different major versions use "
                     "different architectures and are incompatible.\n",
                     ver_major, g_expected_major);
@@ -369,8 +369,8 @@ static void fwupgrade_frame_handler(const unsigned char *frame, int len) {
         } else if (g_expected_major < 0) {
             /* Filename had no recognizable version — the user already
              * confirmed at startup, just note it. */
-            fprintf(stderr, "WARNING: Could not verify MCU version against "
-                    "firmware filename. MCU reports %d.%d. Proceeding.\n",
+            fprintf(stderr, "WARNING: Could not verify bootloader version against "
+                    "firmware filename. Bootloader reports %d.%d. Proceeding.\n",
                     ver_major, ver_minor);
         }
         fwupgrade_step_success();
